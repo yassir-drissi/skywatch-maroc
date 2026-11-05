@@ -1,0 +1,16 @@
+# Secrets : ne jamais commiter
+.env
+*credentials*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
