@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/skywatch-maroc/schemas/flights_raw.v1.json",
+  "title": "flights.raw — position d'un avion à un instant",
+  "description": "Un message par avion et par appel OpenSky /states/all. Clé Kafka : icao24 (tous les messages d'un même avion vont dans la même partition, dans l'ordre).",
+  "type": "object",
+  "required": ["schema_version", "source", "snapshot_time", "ingested_at", "icao24", "last_contact", "on_ground"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "source": {"const": "opensky"},
+    "snapshot_time": {"type": "integer", "description": "Horodatage Unix (s) de l'instantané OpenSky"},
+    "ingested_at": {"type": "string", "format": "date-time", "description": "Heure UTC de réception par le producteur"},
+    "icao24": {"type": "string", "pattern": "^[0-9a-f]{6}$", "description": "Identifiant unique du transpondeur (hexadécimal)"},
+    "callsign": {"type": ["string", "null"], "description": "Indicatif de vol, ex. RAM200 ; null si non transmis"},
+    "origin_country": {"type": ["string", "null"], "description": "Pays d'immatriculation déduit de l'adresse ICAO"},
+    "time_position": {"type": ["integer", "null"], "description": "Horodatage Unix (s) de la dernière position"},
+    "last_contact": {"type": "integer", "description": "Horodatage Unix (s) du dernier message reçu"},
+    "longitude": {"type": ["number", "null"], "minimum": -180, "maximum": 180},
+    "latitude": {"type": ["number", "null"], "minimum": -90, "maximum": 90},
+    "baro_altitude": {"type": ["number", "null"], "description": "Altitude barométrique (m)"},
+    "on_ground": {"type": "boolean"},
+    "velocity": {"type": ["number", "null"], "minimum": 0, "description": "Vitesse sol (m/s)"},
+    "true_track": {"type": ["number", "null"], "description": "Cap vrai (degrés, 0 = nord)"},
+    "vertical_rate": {"type": ["number", "null"], "description": "Taux de montée (m/s, négatif en descente)"},
+    "geo_altitude": {"type": ["number", "null"], "description": "Altitude géométrique (m)"},
+    "squawk": {"type": ["string", "null"], "description": "Code transpondeur ; 7500/7600/7700 = urgences"},
+    "spi": {"type": ["boolean", "null"]},
+    "position_source": {"enum": ["ADS-B", "ASTERIX", "MLAT", "FLARM", null]},
+    "category": {"type": ["integer", "null"], "minimum": 0, "maximum": 20, "description": "Catégorie d'aéronef (extended=1)"}
+  }
+}
