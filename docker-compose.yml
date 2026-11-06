@@ -69,5 +69,17 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     restart: unless-stopped                          # redémarre seul après une panne
 
+  weather-producer:
+    build: ./ingestion                               # même code, même image que flights-producer
+    image: skywatch/ingestion:latest
+    container_name: skywatch-weather-producer
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    command: ["python", "-m", "skywatch_ingestion.weather_producer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    restart: unless-stopped
+
 volumes:
   kafka-data:
