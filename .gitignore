@@ -14,3 +14,14 @@ __pycache__/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Scala / sbt / Metals
+target/
+.bsp/
+.metals/
+.bloop/
+metals.sbt
+project/project/
+
+# Données locales du lakehouse (Bronze, checkpoints Spark)
+data/
