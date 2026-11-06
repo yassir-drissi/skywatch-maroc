@@ -27,19 +27,28 @@ La fin de la semaine 1 et toute la semaine 2 sont terminées et testées avec de
 | 8c | `ec12206` | Parsing typé de `flights.raw`, watermark 10 min, dédoublonnage, trafic par aéroport / 5 min |
 | 8d | `23441d5` | `HoldingDetector` + `HoldingJob` (état par avion) → alertes `HOLDING`, script `demo_holding` |
 | 8e | `f2e200e` | `GoAroundDetector` + `GoAroundJob` → alertes `GO_AROUND`, altitude des pistes, script `demo_go_around` |
-| 8f | (ce commit) | Schéma `flights_alerts.schema.json`, job Scala dans la CI, README, ce document |
+| 8f | `ab26bd9` | Schéma `flights_alerts.schema.json`, job Scala dans la CI, README, ce document |
 
 ### Branches et Pull Requests
 
-Une branche par étape, chacune partant de la précédente :
+Le travail est livré en **2 Pull Requests**, une par semaine :
 
-```
-main ← feat/producteur-docker ← feat/producteur-meteo ← feat/ci ← feat/spark-setup
-     ← feat/spark-bronze ← feat/spark-traffic ← feat/spark-holding ← feat/spark-go-around ← feat/docs-semaine2
-```
+| PR | Branche | Base | Contenu |
+|---|---|---|---|
+| 1 | `feat/ci` | `main` | Fin de la semaine 1 : producteur dans Docker, météo, CI (4 commits, Python) |
+| 2 | `feat/docs-semaine2` | `feat/ci`, puis `main` | Semaine 2 : Spark Scala, détections, passation (7 commits) |
 
-**Fusionner les PR dans cet ordre, avec « Create a merge commit »** (pas « Squash and merge »,
-sinon les branches suivantes auront des conflits).
+La PR 2 part de la PR 1. Pour la relire, sa base est d'abord `feat/ci` : GitHub ne montre alors
+que le travail de la semaine 2.
+
+Ordre de fusion :
+
+1. Fusionner la PR 1 dans `main` avec **« Create a merge commit »** (pas « Squash and merge »).
+2. Dans la PR 2, bouton **Edit** à côté du titre : changer la base de `feat/ci` en `main`.
+3. Fusionner la PR 2 avec **« Create a merge commit »**.
+
+Chaque commit correspond à une étape du tableau ci-dessus : l'onglet « Commits » d'une PR
+permet de relire étape par étape.
 
 ## 3. Démarrer sur sa machine (Windows · PowerShell)
 
@@ -142,65 +151,4 @@ qualité de la semaine 4 devront détecter ce genre de trou.
 | `sbt` : `[success]` mais aucun test | Fichier de test collé mais pas enregistré (0 octet) | Ctrl+S ; activer **File → Auto Save** |
 | `ImportError` / `expected class or object definition` | Code collé dans le mauvais fichier (Python dans un `.scala`) | Vérifier le nom de l'onglet et l'extension avant de coller |
 | `W292 No newline at end of file` | Pas de saut de ligne final | `ruff check . --fix` ; activer **Files: Insert Final Newline** |
-| Fichiers « modifiés » sans changement de code | Fins de ligne passées de LF à CRLF | `git checkout -- <fichier>` ; **Files: Eol** = `\n` |
-| `winget` introuvable | Pas installé sur ce Windows | Installer sbt avec le `.msi` de scala-sbt.org |
-| Dossier `null\Coursier` à la racine | Créé par l'extension Metals | Sans gravité, vide, ignoré par Git |
-| `` ` `` dans une commande `spark-sql` | Caractère spécial de PowerShell entre `"…"` | Utiliser des guillemets simples `'…'` |
-| `WARN … adaptive.enabled is not supported in streaming` | Message normal de Spark | Rien à faire |
-
-## 8. À faire en semaine 3 (Databricks : Silver et Gold)
-
-1. **Archiver aussi `flights.alerts` en Bronze** : ajouter
-   `BronzeJob.startBronze(spark, config, config.alertsTopic, "alerts")` dans `StreamingApp`.
-2. **GCS** : un compte Google Cloud, un bucket, un compte de service. Ajouter le connecteur GCS au
-   conteneur Spark et passer `LAKE_PATH=gs://<bucket>/lake`. Databricks lira le Bronze depuis GCS.
-3. **Silver** (`silver_positions`, `silver_weather`) : parser `raw_json` (réutiliser le schéma de
-   `FlightsStream.Schema`), typer, **retirer `source = "demo"`**, dédoublonner sur
-   `icao24 + snapshot_time`, ajouter l'aéroport le plus proche et sa météo de l'heure.
-4. **Gold** : `gold_flights` (vols reconstruits), `gold_airport_hourly` (trafic par heure, version
-   historique de `traffic_5min`), `gold_anomalies` (depuis le Bronze des alertes).
-5. Laisser les producteurs et Spark tourner : plus il y a d'historique, plus la semaine 3 est intéressante.
-
-## 9. Fiche entretien (semaine 2)
-
-**Pourquoi Spark Structured Streaming et pas un simple consumer Python ?**
-Watermark, fenêtres, état par clé, checkpoints et reprise exacte après une panne sont déjà fournis.
-Le même code passe à l'échelle sur un cluster (Databricks) sans réécriture.
-
-**Event time ou processing time ?**
-Les fenêtres et les détections utilisent `snapshot_time` (event time), le moment où l'avion était à
-cette position. `ingested_at` (processing time) peut être en retard si le producteur ou Kafka ralentit.
-
-**À quoi sert le watermark ?**
-Il dit à Spark jusqu'à quand attendre les messages en retard (10 minutes). Après, Spark ferme les
-fenêtres et libère la mémoire ; sans watermark, l'état grandirait sans fin.
-
-**Que garantit le checkpoint ?**
-Spark y écrit les offsets Kafka lus et l'état des avions. Après un redémarrage, il reprend
-exactement au même endroit, sans perte. Une query = un checkpoint.
-
-**Pourquoi `flatMapGroupsWithState` pour les attentes ?**
-Un tour d'attente dure environ 4 minutes, donc plusieurs micro-batchs. Il faut garder, avion par
-avion, ses dernières positions entre les batchs. Le timeout supprime l'état d'un avion qui ne donne
-plus de nouvelles.
-
-**Comment as-tu testé la détection ?**
-La règle est en Scala pur (`HoldingDetector`, `GoAroundDetector`), testée avec des trajectoires
-inventées : vrai tour d'attente, ligne droite, zigzag, haute altitude, loin des aéroports, positions
-trop espacées, deux batchs, délai entre alertes. Puis de bout en bout avec les scripts de démo.
-
-**Pourquoi `headingDelta` ?**
-De 350° à 10°, l'avion a tourné de +20°, pas de −340°. Sans ce calcul, le passage par le nord
-fausserait la somme des virages.
-
-**Pourquoi l'altitude des pistes ?**
-OpenSky donne l'altitude au-dessus de la mer. Fès est à 579 m : un avion à 900 m n'y est qu'à 321 m
-au-dessus de la piste. Sans correction, une remise de gaz à Fès serait ratée.
-
-**Quelle limite as-tu trouvée dans les données ?**
-J'ai mesuré la couverture avant de calibrer : seules les approches de Tanger sont visibles à basse
-altitude. Je l'ai documenté et j'ai prouvé la chaîne avec des données de démo marquées et filtrables.
-
-**Pourquoi un jar « Provided » ?**
-Spark est déjà dans l'image Docker (et sur Databricks). Le jar ne contient que notre code ; le
-connecteur Kafka est téléchargé au démarrage avec `--packages`.
+| Fichiers « modifiés » sans changement de code | Fins de ligne passées de LF à CRLF | `git checkout --
