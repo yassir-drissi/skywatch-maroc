@@ -56,5 +56,18 @@ services:
       KAFKA_CLUSTERS_0_NAME: skywatch
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
+  flights-producer:
+    build: ./ingestion
+    image: skywatch/ingestion:latest
+    container_name: skywatch-flights-producer
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully   # les topics doivent exister avant
+    env_file: .env                                   # identifiants OpenSky
+    environment:
+      # Adresse INTERNE : dans Docker, « localhost » serait le conteneur lui-même
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    restart: unless-stopped                          # redémarre seul après une panne
+
 volumes:
   kafka-data:
