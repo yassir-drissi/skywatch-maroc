@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/skywatch-maroc/schemas/flights_alerts.v1.json",
+  "title": "flights.alerts — anomalie détectée par Spark",
+  "description": "Un message par anomalie. Clé Kafka : icao24. Produit par HoldingJob (HOLDING) et GoAroundJob (GO_AROUND). Spark (to_json) n'écrit pas les champs null : callsign et altitude_m peuvent être absents.",
+  "type": "object",
+  "required": ["schema_version", "alert_type", "icao24", "airport", "detected_at", "latitude", "longitude", "positions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "alert_type": {"enum": ["HOLDING", "GO_AROUND"], "description": "HOLDING = attente en circuit, GO_AROUND = remise de gaz"},
+    "icao24": {"type": "string", "pattern": "^[0-9a-f]{6}$"},
+    "callsign": {"type": "string"},
+    "airport": {"type": "string", "pattern": "^GM[A-Z]{2}$", "description": "Aéroport concerné (code OACI)"},
+    "detected_at": {"type": "integer", "description": "Horodatage Unix (s) de la dernière position prise en compte"},
+    "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+    "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+    "positions": {"type": "integer", "minimum": 1, "description": "Nombre de positions utilisées pour la détection"},
+
+    "window_start": {"type": "integer", "description": "HOLDING : horodatage de la première position de la fenêtre"},
+    "total_turn_deg": {"type": "number", "description": "HOLDING : somme des virages (degrés, + = droite)"},
+    "altitude_m": {"type": "number", "description": "HOLDING : altitude au moment de l'alerte (m, au-dessus de la mer)"},
+
+    "lowest_at": {"type": "integer", "description": "GO_AROUND : horodatage du point le plus bas"},
+    "lowest_altitude_m": {"type": "number", "description": "GO_AROUND : altitude du point le plus bas (m, au-dessus de la mer)"},
+    "lowest_agl_m": {"type": "number", "description": "GO_AROUND : hauteur du point le plus bas au-dessus de la piste (m)"},
+    "climb_m": {"type": "number", "minimum": 0, "description": "GO_AROUND : remontée après le point le plus bas (m)"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"alert_type": {"const": "HOLDING"}}},
+      "then": {"required": ["window_start", "total_turn_deg"]}
+    },
+    {
+      "if": {"properties": {"alert_type": {"const": "GO_AROUND"}}},
+      "then": {"required": ["lowest_at", "lowest_altitude_m", "lowest_agl_m", "climb_m"]}
+    }
+  ]
+}
