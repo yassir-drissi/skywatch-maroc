@@ -8,7 +8,8 @@ import org.apache.spark.sql.SparkSession
   *   - bronze_flights : flights.raw  → Parquet bronze/flights
   *   - bronze_weather : weather.raw  → Parquet bronze/weather
   *   - traffic_5min   : flights.raw  → trafic par aéroport (console)
-  *   - holding_alerts : flights.raw  → attentes en circuit → topic flights.alerts
+  *   - holding_alerts   : flights.raw → attentes en circuit → topic flights.alerts
+  *   - go_around_alerts : flights.raw → remises de gaz       → topic flights.alerts
   */
 object StreamingApp {
 
@@ -30,6 +31,7 @@ object StreamingApp {
     BronzeJob.startBronze(spark, config, config.weatherTopic, "weather")
     TrafficJob.startTraffic(spark, config)
     HoldingJob.startHolding(spark, config)
+    GoAroundJob.startGoAround(spark, config)
 
     spark.streams.awaitAnyTermination() // tourne jusqu'à l'arrêt du conteneur
   }
