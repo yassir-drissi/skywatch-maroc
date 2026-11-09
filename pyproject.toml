@@ -1,5 +1,5 @@
 [tool.pytest.ini_options]
-pythonpath = ["ingestion"]
+pythonpath = ["ingestion", "databricks"]
 testpaths = ["tests"]
 
 [tool.ruff]
