@@ -110,5 +110,38 @@ services:
       - "4040:4040"                                    # Spark UI
     restart: unless-stopped
 
+  # Semaine 3 : Silver / Gold en PySpark + Delta Lake (batch, lancé à la demande)
+  #   docker compose --profile batch run --rm lakehouse jobs/run_silver.py
+  lakehouse:
+    image: spark:3.5.7-scala2.12-java17-python3-ubuntu   # même Spark que le streaming, avec Python
+    container_name: skywatch-lakehouse
+    profiles: ["batch"]                                 # pas démarré par « docker compose up »
+    working_dir: /opt/skywatch/databricks
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[2]
+      - --driver-memory
+      - 1g
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2
+      - --packages
+      - io.delta:delta-spark_2.12:3.2.1                 # Delta Lake 3.2 = Spark 3.5
+      - --conf
+      - spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+      - --conf
+      - spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+      - --conf
+      - spark.sql.shuffle.partitions=8                  # petites données (200 par défaut)
+      - --conf
+      - spark.ui.showConsoleProgress=false
+    command: ["jobs/run_silver.py"]
+    environment:
+      LAKE_PATH: /opt/skywatch/data/lake
+    volumes:
+      - ./databricks:/opt/skywatch/databricks:ro
+      # MÊME chemin que spark-streaming : Bronze contient _spark_metadata avec des chemins absolus
+      - ./data:/opt/skywatch/data
+
 volumes:
   kafka-data:
