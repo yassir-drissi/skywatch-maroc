@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pyspark.sql import SparkSession  # noqa: E402
 from skywatch_lakehouse import quality  # noqa: E402
 from skywatch_lakehouse.gold import airport_hourly, anomalies_to_gold, flights_to_gold  # noqa: E402
-from skywatch_lakehouse.lake import Lake  # noqa: E402
+from skywatch_lakehouse.lake import Lake, cache  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 log = logging.getLogger("run_gold")
@@ -43,16 +43,16 @@ def read_alerts(spark: SparkSession, lake: Lake):
 
 
 def run(spark: SparkSession, lake: Lake) -> None:
-    silver_flights = lake.read(spark, "silver", "flights").cache()
-    silver_weather = lake.read(spark, "silver", "weather").cache()
+    silver_flights = cache(lake.read(spark, "silver", "flights"))
+    silver_weather = cache(lake.read(spark, "silver", "weather"))
 
     # 1. Calculer les tables Gold
-    flights = flights_to_gold(silver_flights).cache()
-    hourly = airport_hourly(silver_flights, flights, silver_weather).cache()
+    flights = cache(flights_to_gold(silver_flights))
+    hourly = cache(airport_hourly(silver_flights, flights, silver_weather))
     bronze_alerts = read_alerts(spark, lake)
     anomalies = None
     if bronze_alerts is not None:
-        anomalies = anomalies_to_gold(bronze_alerts, flights, silver_weather).cache()
+        anomalies = cache(anomalies_to_gold(bronze_alerts, flights, silver_weather))
         if not anomalies.take(1):
             anomalies = None
 
