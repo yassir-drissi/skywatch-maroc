@@ -1,4 +1,208 @@
-# SkyWatch Maroc — Passation (fin de semaine 1 + semaine 2)
+# SkyWatch Maroc — Passation
+
+| Partie | Semaines | Auteur | Date |
+|---|---|---|---|
+| **A** | 3 : lakehouse Silver / Gold (Delta Lake, Databricks) | Mustapha Hamdaoui Alaoui | 9 novembre 2026 |
+| **B** | 1 et 2 : ingestion Kafka, streaming Spark Scala | Mohamed Benheddane (suite de Yassir Drissi) | 6 novembre 2026 |
+
+---
+
+# Partie A — Semaine 3 : Silver et Gold en Delta Lake
+
+## A1. Résumé
+
+La semaine 3 est terminée et testée avec de vraies données, **en local et sur Databricks**.
+
+- **Silver** : une position d'avion propre par ligne (démo et doublons retirés, aéroport le plus proche,
+  hauteur au-dessus de la piste) + la météo propre.
+- **Gold** : `gold_flights` (un vol par ligne : arrivée, départ ou survol), `gold_airport_hourly`
+  (trafic par aéroport et par heure, croisé avec la météo), `gold_anomalies` (alertes du streaming
+  reliées au vol et à la météo).
+- **Contrôles qualité avant écriture** : si une règle échoue, le job s'arrête et Gold n'est pas modifié.
+- **Écriture par `MERGE INTO`** : relancer un job ne crée jamais de doublons (vérifié : `DESCRIBE HISTORY`).
+- **Même code partout** : PySpark + SQL dans `databricks/`, lancé en local par Docker (service `lakehouse`)
+  et sur Databricks Free Edition par un job planifié `silver → gold` (calcul serverless).
+- Le streaming Scala archive maintenant aussi les alertes : 6e query `bronze_alerts` → `bronze/alerts`.
+- Tests : **16 tests lakehouse** (vrai Spark local, sans Delta) + les 55 Python et 39 Scala existants.
+  CI : nouveau job `lakehouse`.
+
+## A2. Ce qui a été fait
+
+| Commit (message) | Contenu |
+|---|---|
+| `feat(lakehouse): couche Silver PySpark + Delta (MERGE idempotent)` | `silver.py`, `airports.py`, `lake.py`, `run_silver.py`, service Docker `lakehouse`, 10 tests |
+| `feat(lakehouse): couche Gold (...) + contrôles qualité + CI` | `gold.py`, `quality.py`, `run_gold.py`, query `bronze_alerts` (Scala), job CI `lakehouse`, 6 tests |
+| `feat(lakehouse): compatible Databricks serverless (MERGE SQL, cache optionnel)` | `MERGE INTO` en SQL, `cache()` toléré absent |
+| `fix(lakehouse): jobs lançables sur Databricks serverless (sans __file__)` | `_lakehouse_dir()` dans les deux jobs |
+| `fix(lakehouse): dossier Bronze vide détecté tout de suite sur Spark Connect` | `df.columns` dans `read_bronze` |
+| `docs: passation semaine 3, README, script de synchronisation` | ce document, README, `scripts/sync_bronze_databricks.ps1` |
+
+## A3. Architecture du lakehouse
+
+```
+streaming Scala (semaine 2)                 batch PySpark (semaine 3, dossier databricks/)
+─────────────────────────────               ───────────────────────────────────────────────
+bronze/flights  (Parquet) ──┐
+bronze/weather  (Parquet) ──┼─► run_silver.py ─► silver_flights, silver_weather   (Delta, MERGE)
+bronze/alerts   (Parquet) ──┘                          │
+                     │                                 ▼
+                     └──────────────────────► run_gold.py ─► gold_flights        (Delta, MERGE)
+                                               contrôles     gold_airport_hourly (Delta, réécrite)
+                                               qualité       gold_anomalies      (Delta, MERGE)
+```
+
+| Fichier | Rôle |
+|---|---|
+| `databricks/skywatch_lakehouse/airports.py` | 6 aéroports + altitude des pistes (mêmes valeurs que `Airports.scala`, vérifié par un test) |
+| `databricks/skywatch_lakehouse/silver.py` | Bronze → Silver : schémas explicites, filtres, dédoublonnage, aéroport le plus proche |
+| `databricks/skywatch_lakehouse/gold.py` | Silver → Gold : découpage en vols, classement, agrégats horaires, anomalies |
+| `databricks/skywatch_lakehouse/quality.py` | Contrôles : clés uniques, valeurs non nulles, pas de démo, types de vol connus |
+| `databricks/skywatch_lakehouse/lake.py` | Où lire / écrire : dossiers Delta en local, tables Unity Catalog sur Databricks ; `MERGE INTO` |
+| `databricks/jobs/run_silver.py`, `run_gold.py` | Points d'entrée (local et Databricks), paramètres `--lake-path`, `--schema` |
+| `scripts/sync_bronze_databricks.ps1` | Envoie Bronze (sans `_spark_metadata`) vers le volume Databricks, lance le job |
+
+## A4. Les tables
+
+**`silver_flights`** (clé `icao24, snapshot_time`, partition `event_date`) : positions OpenSky seulement
+(`source = "opensky"`), identifiant valide, coordonnées dans la zone 28–36°N × 13–1°W, une ligne par
+(avion, instantané) en gardant le message arrivé en dernier dans Kafka. Colonnes ajoutées : `event_time`,
+`callsign` nettoyé, `airline_icao` (RAM200 → RAM), `altitude_m` (baro, sinon géométrique ; aberrations
+retirées), `velocity_kmh`, `nearest_airport`, `distance_km`, `agl_m` (hauteur au-dessus de la piste),
+`in_terminal_area` (≤ 60 km).
+
+**`silver_weather`** (clé `icao, observed_at`) : relevés Open-Meteo, `low_visibility` (< 5 km),
+`strong_wind` (vent ≥ 20 kt ou rafales ≥ 30 kt).
+
+**`gold_flights`** (clé `flight_id = icao24_premierInstantané`) : un vol = positions d'un même avion sans
+trou de plus de 30 min. Classement à partir des positions près d'un aéroport :
+
+| `flight_type` | Règle |
+|---|---|
+| `OVERFLIGHT` | jamais sous 1 500 m au-dessus d'une piste à moins de 60 km |
+| `ARRIVAL` | vu au moins 300 m plus haut au début qu'à la fin (descend vers la piste) |
+| `DEPARTURE` | vu au moins 300 m plus bas au début qu'à la fin (monte) |
+| `LOW_LEVEL` | bas près d'un aéroport, sans montée ni descente nette |
+
+**`gold_airport_hourly`** (clé `airport, date, hour`) : avions, positions, avions bas, arrivées, départs,
+et météo de l'heure (pire visibilité, vent et rafales max, pluie). Les heures sans trafic sont gardées
+(utile pour comparer trafic et météo).
+
+**`gold_anomalies`** (clé `alert_type, icao24, detected_at`) : alertes HOLDING / GO_AROUND, reliées au
+`flight_id` et à la météo de l'heure. Les alertes des scripts de démo (`fff001`, `fff002`) sont gardées
+avec `is_demo = true` (filtrer dessus pour les analyses).
+
+## A5. Lancer en local (Windows · PowerShell)
+
+Le streaming doit tourner (Partie B, §3). Puis :
+
+```powershell
+docker compose --profile batch run --rm lakehouse jobs/run_silver.py
+docker compose --profile batch run --rm lakehouse jobs/run_gold.py
+```
+
+- Le service `lakehouse` (profil `batch`) ne démarre pas avec `docker compose up` : on le lance à la demande.
+- Il monte `./data` au **même chemin** que `spark-streaming` (`/opt/skywatch/data`) : Bronze contient
+  `_spark_metadata` avec des chemins absolus, un autre chemin donnerait 0 ligne.
+- Résultat : dossiers Delta `data/lake/silver/*` et `data/lake/gold/*` (avec `_delta_log`).
+- Logs lisibles : `chcp 65001` avant, ou `... *> data\gold.log` puis
+  `Select-String -Path data\gold.log -Encoding UTF8 -Pattern "INFO run_|skywatch.lake|ERROR"`.
+
+**Tests** — PySpark ne marche pas bien directement sous Windows (voir A9) ; on les lance dans l'image Spark :
+
+```powershell
+docker run --rm -u 0 -v "${PWD}:/app" -w /app `
+  -e PYTHONPATH=/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip:/app/databricks:/app/ingestion:/app/tests/lakehouse `
+  -e PYSPARK_PYTHON=python3 spark:3.5.7-scala2.12-java17-python3-ubuntu `
+  bash -c "pip install -q pytest==8.3.4 && python3 -m pytest tests/lakehouse -q -p no:cacheprovider"
+```
+
+## A6. Databricks (Free Edition)
+
+Mise en place (une fois) :
+
+1. CLI : `winget install Databricks.DatabricksCLI`, puis
+   `databricks auth login --host https://<workspace>.cloud.databricks.com` (connexion dans le navigateur,
+   rien n'est écrit dans le projet).
+2. SQL Editor (warehouse **Serverless Starter Warehouse**, pas Lakebase Postgres) :
+   ```sql
+   CREATE SCHEMA IF NOT EXISTS workspace.skywatch;
+   CREATE VOLUME IF NOT EXISTS workspace.skywatch.lake;
+   ```
+3. Envoyer Bronze : `.\scripts\sync_bronze_databricks.ps1`
+4. Code : **Workspace → Create → Git folder** sur ce repo, branche voulue. Penser au **Pull** après chaque
+   push (ou mettre les tâches en *Source : Git provider* pour toujours prendre le dernier commit).
+5. Job `skywatch-lakehouse` (Jobs & Pipelines) : tâche `silver` puis tâche `gold` (*depends on* silver),
+   type **Python script**, calcul **Serverless**, paramètres (liste, pas clé/valeur) :
+   `["--lake-path","/Volumes/workspace/skywatch/lake","--schema","workspace.skywatch"]`
+6. Planning : *Schedules & Triggers → Scheduled*, toutes les 6 h ; *Retries* = 1.
+
+Tables créées : `workspace.skywatch.silver_flights`, `silver_weather`, `gold_flights`,
+`gold_airport_hourly` (et `gold_anomalies` dès qu'une alerte est archivée).
+
+```sql
+SELECT flight_type, airport, COUNT(*) AS vols FROM workspace.skywatch.gold_flights GROUP BY ALL ORDER BY vols DESC;
+DESCRIBE HISTORY workspace.skywatch.silver_flights;   -- version 0 = création, puis un MERGE par exécution
+```
+
+**Ce qui n'est pas automatique :** Bronze vit sur le PC (Kafka et le streaming tournent dans Docker).
+Databricks ne voit que ce qu'on y envoie avec le script. Un flux continu demanderait Kafka dans le cloud.
+
+## A7. Décisions techniques
+
+| Sujet | Choix | Pourquoi |
+|---|---|---|
+| Langage | PySpark + SQL (le streaming reste en Scala) | Databricks Free Edition ne lance pas de Scala |
+| Transformations | Fonctions pures `DataFrame → DataFrame` | Testables avec un Spark local, sans Delta ni Databricks |
+| Un seul code | `Lake(lake_path, schema)` | Local = dossiers Delta ; Databricks = tables Unity Catalog ; seul `--schema` change |
+| Écriture | `MERGE INTO` (SQL) sur une clé | Idempotent ; la même requête marche en local et en serverless |
+| `gold_airport_hourly` | Réécrite entièrement | Petite table d'agrégats : plus simple qu'un MERGE |
+| Qualité | Contrôles **avant** écriture | Ne jamais publier une table Gold fausse |
+| Démo | Retirée de Silver ; gardée et marquée dans `gold_anomalies` | Analyses propres, démo toujours possible |
+| Vol | Trou > 30 min = nouveau vol | OpenSky donne une position toutes les ~45 s quand l'avion est couvert |
+| Seuils | 1 500 m AGL, 300 m de montée/descente, 60 km | Constantes en haut de `gold.py` |
+| Bronze sur Databricks | Copie sans `_spark_metadata` | Chemins absolus Docker inutilisables ailleurs |
+
+## A8. Ce que disent les vraies données (9 novembre, ~12 h – 15 h)
+
+| Mesure | Valeur |
+|---|---|
+| Positions Silver | 4 924 (0 démo, 0 position invalide, 0 doublon : le producteur n'a pas redémarré) |
+| Vols reconstruits | 283 |
+| Survols (`OVERFLIGHT`) | 275 (97 %) : le Maroc est surtout un couloir Europe ↔ Canaries / Afrique de l'Ouest |
+| Arrivées / départs / bas | 4 / 3 / 1, **tous à Tanger (GMTT)** |
+| Casablanca, Rabat, Fès | 0 arrivée : les « avions dans la zone » de Silver sont des survols à haute altitude |
+| Databricks | job `silver` 28 s, `gold` 32 s (serverless) |
+
+Gold **mesure** la limite déjà vue en semaine 2 : OpenSky dépend d'antennes ADS-B bénévoles, nombreuses
+dans le sud de l'Espagne et rares au Maroc. Les avions qui descendent vers Casablanca sortent de la
+couverture avant d'atterrir.
+
+## A9. Pièges rencontrés et solutions
+
+| Symptôme | Cause | Solution |
+|---|---|---|
+| Tests PySpark sous Windows : `o48.parquet`, `collectToPython` en échec | Spark sous Windows : pas de `winutils.exe`, workers Python instables | Lancer les tests dans l'image Docker Spark (A5) |
+| `PYTHON_VERSION_MISMATCH` | Workers Spark sur un autre Python que pytest | `PYSPARK_PYTHON = sys.executable` dans les tests |
+| `no tests ran` | Fichiers de test vides (pièce jointe pas enregistrée) | Vérifier la taille : `Get-ChildItem tests\lakehouse` |
+| `W292 No newline at end of file` en CI | Code collé sans saut de ligne final | `ruff check . --fix` avant chaque commit ; **Files: Insert Final Newline** |
+| Databricks : `NameError: __file__` | Le serverless lance le script avec `exec()` | `_lakehouse_dir()` essaie `__file__`, `sys.argv[0]`, puis le dossier courant |
+| Databricks : encore l'ancienne erreur après correction | Git folder pas mis à jour | **Pull** dans le Git folder (ou source Git provider) |
+| Databricks : `UNABLE_TO_INFER_SCHEMA` sur `bronze/alerts` | Dossier vide ; Spark Connect ne lit qu'au premier calcul, hors du `try` | `df.columns` juste après la lecture |
+| Databricks : `cache()` refusé | Pas de cache en serverless | `lake.cache()` tolère l'absence |
+| Logs avec `├⌐` | Encodage de la console PowerShell | `chcp 65001` ; `Select-String -Encoding UTF8` |
+
+## A10. Suite (semaine 4 et après)
+
+- **Airflow** : orchestrer `sync_bronze_databricks.ps1` (ou son équivalent) puis le job Databricks.
+- **Contrôles de fraîcheur** : détecter les trous de données (ex. 17 h 45 – 19 h 50 le 6 novembre) :
+  heures sans aucune position dans `gold_airport_hourly`.
+- **`gold_anomalies`** : lancer `demo_holding` / `demo_go_around` pour la remplir et la montrer.
+- Après fusion de la PR : passer le Git folder et le job sur la branche `main`.
+- Snowflake + dbt (semaine 5) : partir de `gold_flights` et `gold_airport_hourly`.
+
+---
+
+# Partie B — Semaines 1 et 2 (ingestion + streaming)
 
 **Auteur :** Mohamed Benheddane · **Date :** 6 novembre 2026
 **Suite de :** dossier de passation semaine 1 de Yassir Drissi (ingestion OpenSky → Kafka)
@@ -151,4 +355,4 @@ qualité de la semaine 4 devront détecter ce genre de trou.
 | `sbt` : `[success]` mais aucun test | Fichier de test collé mais pas enregistré (0 octet) | Ctrl+S ; activer **File → Auto Save** |
 | `ImportError` / `expected class or object definition` | Code collé dans le mauvais fichier (Python dans un `.scala`) | Vérifier le nom de l'onglet et l'extension avant de coller |
 | `W292 No newline at end of file` | Pas de saut de ligne final | `ruff check . --fix` ; activer **Files: Insert Final Newline** |
-| Fichiers « modifiés » sans changement de code | Fins de ligne passées de LF à CRLF | `git checkout --
+| Fichiers « modifiés » sans changement de code | Fins de ligne passées de LF à CRLF | `git checkout -- <fichier>` pour annuler ; `git config core.autocrlf true` |
