@@ -43,6 +43,9 @@ class Lake:
     # -- Bronze (Parquet écrit par le streaming Scala) ----------------------
     def read_bronze(self, spark: SparkSession, table: str, since_days: int | None = None) -> DataFrame:
         df = spark.read.parquet(f"{self.lake_path}/bronze/{table}")
+        # Spark Connect (Databricks serverless) est paresseux : sans cette ligne, un dossier vide
+        # ne lève l'erreur qu'au premier calcul. On force la lecture du schéma ici, tout de suite.
+        df.columns  # noqa: B018
         if since_days is not None:  # traitement incrémental : seulement les derniers jours
             df = df.filter(F.col("ingest_date") >= F.date_sub(F.current_date(), since_days))
         return df
