@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql import functions as F  # noqa: E402
-from skywatch_lakehouse.lake import Lake  # noqa: E402
+from skywatch_lakehouse.lake import Lake, cache, uncache  # noqa: E402
 from skywatch_lakehouse.silver import (  # noqa: E402
     flights_quality_report,
     flights_to_silver,
@@ -47,7 +47,7 @@ def run(spark: SparkSession, lake: Lake, since_days: int | None = None) -> None:
     log.info("Bronze vols : %(bronze)d messages | démo écartés : %(demo)d | "
              "positions invalides : %(invalid_position)d", report)
 
-    silver = flights_to_silver(bronze).cache()
+    silver = cache(flights_to_silver(bronze))
     n = silver.count()
     if n == 0:
         raise RuntimeError("Silver vols vide : le streaming a-t-il écrit dans bronze/flights ?")
@@ -61,7 +61,7 @@ def run(spark: SparkSession, lake: Lake, since_days: int | None = None) -> None:
                   .orderBy(F.desc("avions")).collect())
     for r in by_airport:
         log.info("  zone %s : %d avions différents", r["nearest_airport"], r["avions"])
-    silver.unpersist()
+    uncache(silver)
 
     # --- Météo --------------------------------------------------------------
     try:

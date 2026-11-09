@@ -7,6 +7,7 @@ import org.apache.spark.sql.SparkSession
   *
   *   - bronze_flights : flights.raw  → Parquet bronze/flights
   *   - bronze_weather : weather.raw  → Parquet bronze/weather
+  *   - bronze_alerts  : flights.alerts → Parquet bronze/alerts (lu par Gold : gold_anomalies)
   *   - traffic_5min   : flights.raw  → trafic par aéroport (console)
   *   - holding_alerts   : flights.raw → attentes en circuit → topic flights.alerts
   *   - go_around_alerts : flights.raw → remises de gaz       → topic flights.alerts
@@ -29,6 +30,7 @@ object StreamingApp {
 
     BronzeJob.startBronze(spark, config, config.flightsTopic, "flights")
     BronzeJob.startBronze(spark, config, config.weatherTopic, "weather")
+    BronzeJob.startBronze(spark, config, config.alertsTopic, "alerts") // archive des alertes pour Gold
     TrafficJob.startTraffic(spark, config)
     HoldingJob.startHolding(spark, config)
     GoAroundJob.startGoAround(spark, config)

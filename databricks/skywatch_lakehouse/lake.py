@@ -19,6 +19,22 @@ from pyspark.sql import functions as F
 log = logging.getLogger("skywatch.lake")
 
 
+def cache(df: DataFrame) -> DataFrame:
+    """Garde un DataFrame en mémoire (plus rapide quand on le relit plusieurs fois).
+    Databricks serverless (Free Edition) refuse cache() : là-bas, on s'en passe."""
+    try:
+        return df.cache()
+    except Exception:  # noqa: BLE001
+        return df
+
+
+def uncache(df: DataFrame) -> None:
+    try:
+        df.unpersist()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @dataclass(frozen=True)
 class Lake:
     lake_path: str                 # ex. /opt/skywatch/data/lake  ou  /Volumes/skywatch/lakehouse/lake
@@ -47,11 +63,13 @@ class Lake:
             return spark.table(self.name(layer, table))
         return spark.read.format("delta").load(self.name(layer, table))
 
+    def sql_name(self, layer: str, table: str) -> str:
+        """Nom utilisable dans une requête SQL : table UC, ou delta.`chemin` en local."""
+        return self.name(layer, table) if self.schema else f"delta.`{self.name(layer, table)}`"
+
     def upsert(self, spark: SparkSession, df: DataFrame, layer: str, table: str,
                keys: list[str], partition_by: list[str] | None = None) -> None:
         """MERGE INTO : met à jour les lignes existantes (même clé), ajoute les nouvelles."""
-        from delta.tables import DeltaTable
-
         target = self.name(layer, table)
         if not self.exists(spark, layer, table):
             writer = df.write.format("delta").mode("overwrite")
@@ -64,13 +82,16 @@ class Lake:
             log.info("%s créée", target)
             return
 
-        delta = DeltaTable.forName(spark, target) if self.schema else DeltaTable.forPath(spark, target)
+        source = f"_skywatch_src_{layer}_{table}"
+        df.createOrReplaceTempView(source)
         condition = " AND ".join(f"t.{k} = s.{k}" for k in keys)
-        (delta.alias("t")
-         .merge(df.alias("s"), condition)
-         .whenMatchedUpdateAll()
-         .whenNotMatchedInsertAll()
-         .execute())
+        spark.sql(f"""
+            MERGE INTO {self.sql_name(layer, table)} AS t
+            USING {source} AS s
+            ON {condition}
+            WHEN MATCHED THEN UPDATE SET *
+            WHEN NOT MATCHED THEN INSERT *
+        """)
         log.info("%s : MERGE terminé", target)
 
     def overwrite(self, df: DataFrame, layer: str, table: str, partition_by: list[str] | None = None) -> None:
