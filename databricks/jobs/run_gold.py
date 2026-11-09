@@ -14,8 +14,29 @@ import os
 import sys
 from pathlib import Path
 
+
+def _lakehouse_dir() -> Path:
+    """Dossier databricks/ (celui qui contient skywatch_lakehouse), en local comme sur Databricks.
+
+    Databricks serverless lance le script avec exec() : __file__ n'existe pas.
+    On essaie donc __file__, puis le chemin du script (sys.argv[0]), puis le dossier courant.
+    """
+    candidates = []
+    try:
+        candidates.append(Path(__file__).resolve().parents[1])
+    except NameError:
+        pass
+    if sys.argv and sys.argv[0]:
+        candidates.append(Path(sys.argv[0]).resolve().parent.parent)
+    candidates += [Path.cwd().parent, Path.cwd()]
+    for folder in candidates:
+        if (folder / "skywatch_lakehouse").is_dir():
+            return folder
+    raise RuntimeError(f"skywatch_lakehouse introuvable (cherché dans {candidates})")
+
+
 # Permet "import skywatch_lakehouse" quel que soit le dossier de lancement (local ou Databricks)
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(_lakehouse_dir()))
 
 from pyspark.sql import SparkSession  # noqa: E402
 from skywatch_lakehouse import quality  # noqa: E402
