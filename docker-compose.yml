@@ -56,5 +56,59 @@ services:
       KAFKA_CLUSTERS_0_NAME: skywatch
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
+  flights-producer:
+    build: ./ingestion
+    image: skywatch/ingestion:latest
+    container_name: skywatch-flights-producer
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully   # les topics doivent exister avant
+    env_file: .env                                   # identifiants OpenSky
+    environment:
+      # Adresse INTERNE : dans Docker, « localhost » serait le conteneur lui-même
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    restart: unless-stopped                          # redémarre seul après une panne
+
+  weather-producer:
+    build: ./ingestion                               # même code, même image que flights-producer
+    image: skywatch/ingestion:latest
+    container_name: skywatch-weather-producer
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    command: ["python", "-m", "skywatch_ingestion.weather_producer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    restart: unless-stopped
+
+  spark-streaming:
+    image: spark:3.5.7-scala2.12-java17-ubuntu        # Spark 3.5.7, Scala 2.12, Java 17 (même version que build.sbt)
+    container_name: skywatch-spark
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[2]                                       # Spark en local dans le conteneur, 2 cœurs
+      - --driver-memory
+      - 1g
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2                      # dossier de téléchargement des --packages
+      - --packages
+      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7   # connecteur Kafka (pas inclus dans l'image)
+      - --class
+      - ma.skywatch.streaming.StreamingApp                 # Bronze + trafic (+ alertes en 8d)
+      - /opt/skywatch/jars/skywatch-streaming_2.12-0.1.0.jar
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      LAKE_PATH: /opt/skywatch/data/lake
+    volumes:
+      - ./streaming/target/scala-2.12:/opt/skywatch/jars:ro   # le jar construit par « sbt streaming/package »
+      - ./data:/opt/skywatch/data                              # Bronze + checkpoints, visibles sur le PC
+    ports:
+      - "4040:4040"                                    # Spark UI
+    restart: unless-stopped
+
 volumes:
   kafka-data:

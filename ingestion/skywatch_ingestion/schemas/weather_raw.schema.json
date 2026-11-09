@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/skywatch-maroc/schemas/weather_raw.v1.json",
+  "title": "weather.raw — météo actuelle d'un aéroport",
+  "description": "Un message par aéroport et par appel Open-Meteo (une fois par heure). Clé Kafka : icao (code OACI de l'aéroport).",
+  "type": "object",
+  "required": ["schema_version", "source", "icao", "latitude", "longitude", "observed_at", "ingested_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "source": {"const": "open-meteo"},
+    "icao": {"type": "string", "pattern": "^GM[A-Z]{2}$", "description": "Code OACI de l'aéroport marocain, ex. GMMN"},
+    "airport_name": {"type": "string"},
+    "city": {"type": "string"},
+    "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+    "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+    "observed_at": {"type": "integer", "description": "Horodatage Unix (s) de la mesure Open-Meteo (event time)"},
+    "ingested_at": {"type": "string", "format": "date-time", "description": "Heure UTC de réception par le producteur"},
+    "temperature_c": {"type": ["number", "null"], "description": "Température à 2 m (°C)"},
+    "humidity_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+    "precipitation_mm": {"type": ["number", "null"], "minimum": 0, "description": "Pluie + neige du dernier quart d'heure (mm)"},
+    "weather_code": {"type": ["integer", "null"], "description": "Code météo WMO (0 = ciel clair, 45 = brouillard, 61 = pluie...)"},
+    "cloud_cover_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+    "pressure_hpa": {"type": ["number", "null"], "description": "Pression au niveau de la mer (hPa)"},
+    "visibility_m": {"type": ["number", "null"], "minimum": 0, "description": "Visibilité (m)"},
+    "wind_speed_kt": {"type": ["number", "null"], "minimum": 0, "description": "Vent moyen à 10 m (nœuds)"},
+    "wind_direction_deg": {"type": ["number", "null"], "minimum": 0, "maximum": 360, "description": "D'où vient le vent (degrés)"},
+    "wind_gust_kt": {"type": ["number", "null"], "minimum": 0, "description": "Rafales à 10 m (nœuds)"},
+    "is_day": {"type": ["boolean", "null"]}
+  }
+}
