@@ -19,7 +19,6 @@ pytest.importorskip("pyspark")
 
 from pyspark.sql import SparkSession  # noqa: E402
 from skywatch_lakehouse.lake import Lake  # noqa: E402
-from skywatch_lakehouse.silver import keep_latest  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = 1762430400
@@ -44,7 +43,8 @@ class ParquetLake(Lake):
     def upsert(self, spark, df, layer, table, keys, partition_by=None):
         if self.exists(spark, layer, table):
             old = self.read(spark, layer, table)
-            df = keep_latest(old.unionByName(df), keys).localCheckpoint()
+            # MERGE simulé : on garde les anciennes lignes dont la clé n'est pas dans le nouveau lot
+            df = old.join(df.select(*keys), keys, "left_anti").unionByName(df).localCheckpoint()
         df.write.mode("overwrite").parquet(self.name(layer, table))
 
 

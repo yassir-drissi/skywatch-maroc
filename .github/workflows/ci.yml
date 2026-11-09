@@ -2,6 +2,7 @@
 # GitHub lance deux jobs en parallèle :
 #   - python : lint, tests et vérification de docker-compose.yml (ingestion)
 #   - scala  : compilation, tests et jar du job Spark (streaming)
+#   - lakehouse : tests Silver / Gold avec un vrai Spark local (PySpark)
 name: CI
 
 on:
@@ -65,3 +66,29 @@ jobs:
 
       - name: Tests et jar (sbt)
         run: sbt streaming/test streaming/package
+
+  lakehouse:
+    name: lakehouse
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"   # PySpark a besoin de Java
+
+      - name: Installer Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # PySpark 3.5 : Python 3.8 à 3.11 conseillé
+          cache: pip
+
+      - name: Installer PySpark et pytest
+        run: pip install pyspark==3.5.7 pytest==8.3.4
+
+      - name: Tests Silver / Gold (pytest)
+        run: pytest tests/lakehouse -v
